@@ -10,47 +10,64 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: List workflow files
-        id: list
+      - name: Install jq
         run: |
-          files=$(ls workflows/*.json 2>/dev/null || true)
-          echo "files<<EOF" >> $GITHUB_OUTPUT
-          echo "$files" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Collect workflow files
+        id: list
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(workflows/*.json)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+          else
+            printf -v joined "%s " "${files[@]}"
+            echo "files=${joined% }" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upsert to n8n
         if: ${{ steps.list.outputs.files != '' }}
         env:
           N8N_URL: ${{ secrets.N8N_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           for f in ${{ steps.list.outputs.files }}; do
-            echo "Deploy $f"
-            body=$(cat "$f")
-            name=$(jq -r '.name // empty' <<< "$body")
-            id=$(jq -r '.id // empty' <<< "$body")
+            echo "::group::Deploy $f"
+            body="$(cat "$f")"
+            name="$(jq -r '.name // empty' <<<"$body")"
+            id="$(jq -r '.id // empty' <<<"$body")"
+
+            if [ -z "$name" ]; then
+              echo "ERROR: file $f не содержит поле .name"; exit 1
+            fi
+
+            # Если id нет — ищем по имени среди существующих воркфлоу
+            if [ -z "$id" ]; then
+              echo "Ищу workflow по имени: $name"
+              existing="$(curl -sS "$N8N_URL/api/v1/workflows" -H "X-N8N-API-KEY: $N8N_API_KEY")"
+              id="$(jq -r --arg n "$name" '.[] | select(.name==$n) | .id' <<<"$existing" | head -n1 || true)"
+            fi
+
             if [ -n "$id" ]; then
+              echo "PATCH /workflows/$id"
               curl -sS -X PATCH "$N8N_URL/api/v1/workflows/$id" \
-                -H "X-N8N-API-KEY: $N8N_API_KEY" -H "Content-Type: application/json" \
+                -H "X-N8N-API-KEY: $N8N_API_KEY" \
+                -H "Content-Type: application/json" \
                 --data "$body" >/dev/null
             else
-              found=$(curl -sS "$N8N_URL/api/v1/workflows?filter=$(python3 - <<PY
-import json,urllib.parse; print(urllib.parse.quote(json.dumps({"name": "$name"})))
-PY
-)" -H "X-N8N-API-KEY: $N8N_API_KEY")
-              wf_id=$(echo "$found" | jq -r '.[0].id // empty')
-              if [ -n "$wf_id" ]; then
-                curl -sS -X PATCH "$N8N_URL/api/v1/workflows/$wf_id" \
-                  -H "X-N8N-API-KEY: $N8N_API_KEY" -H "Content-Type: application/json" \
-                  --data "$body" >/dev/null
-              else
-                curl -sS -X POST "$N8N_URL/api/v1/workflows" \
-                  -H "X-N8N-API-KEY: $N8N_API_KEY" -H "Content-Type: application/json" \
-                  --data "$body" >/dev/null
-              fi
+              echo "POST /workflows"
+              curl -sS -X POST "$N8N_URL/api/v1/workflows" \
+                -H "X-N8N-API-KEY: $N8N_API_KEY" \
+                -H "Content-Type: application/json" \
+                --data "$body" >/dev/null
             fi
-            echo "OK"
+            echo "::endgroup::"
           done
