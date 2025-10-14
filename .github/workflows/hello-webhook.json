@@ -4,6 +4,7 @@
       {
         "parameters": {
           "path": "hello",
+          "httpMethod": "GET",
           "options": { "responseData": "ok" }
         },
         "id": "Webhook_1",
