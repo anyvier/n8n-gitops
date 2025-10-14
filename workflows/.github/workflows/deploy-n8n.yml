@@ -1,0 +1,46 @@
+name: Deploy n8n workflows
+on:
+  push:
+    paths: ["workflows/*.json"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Deploy each workflow JSON
+        env:
+          N8N_BASE_URL: ${{ secrets.N8N_BASE_URL }}
+          N8N_API_KEY:  ${{ secrets.N8N_API_KEY }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in workflows/*.json; do
+            echo "==> $f"
+            NAME=$(jq -r '.name' "$f")
+            if [ -z "$NAME" ] || [ "$NAME" = "null" ]; then
+              echo "❌ $f: .name is empty"; exit 1
+            fi
+            EXISTING=$(curl -sS -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_BASE_URL/api/v1/workflows?limit=9999")
+            ID=$(echo "$EXISTING" | jq -r --arg n "$NAME" '.data[]? | select(.name==$n) | .id' | head -n1)
+            if [ -n "${ID:-}" ] && [ "$ID" != "null" ]; then
+              echo "♻️  Update $NAME (id=$ID)"
+              curl -sS -X PUT \
+                   -H "X-N8N-API-KEY: $N8N_API_KEY" \
+                   -H "Content-Type: application/json" \
+                   -d @"$f" \
+                   "$N8N_BASE_URL/api/v1/workflows/$ID" | jq .
+            else
+              echo "➕ Create $NAME"
+              curl -sS -X POST \
+                   -H "X-N8N-API-KEY: $N8N_API_KEY" \
+                   -H "Content-Type: application/json" \
+                   -d @"$f" \
+                   "$N8N_BASE_URL/api/v1/workflows" | jq .
+            fi
+          done
