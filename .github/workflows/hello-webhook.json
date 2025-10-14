@@ -1,0 +1,19 @@
+{
+    "name": "hello-webhook",
+    "nodes": [
+      {
+        "parameters": {
+          "path": "hello",
+          "options": { "responseData": "ok" }
+        },
+        "id": "Webhook_1",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 1,
+        "position": [300, 300]
+      }
+    ],
+    "connections": {},
+    "active": false
+  }
+  
