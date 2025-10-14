@@ -13,7 +13,7 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Deploy each workflow JSON
+      - name: Deploy each workflow JSON (no local jq parse)
         env:
           N8N_BASE_URL: ${{ secrets.N8N_BASE_URL }}
           N8N_API_KEY:  ${{ secrets.N8N_API_KEY }}
@@ -22,12 +22,11 @@ jobs:
           shopt -s nullglob
           for f in workflows/*.json; do
             echo "==> $f"
-            NAME=$(jq -r '.name' "$f")
-            if [ -z "$NAME" ] || [ "$NAME" = "null" ]; then
-              echo "❌ $f: .name is empty"; exit 1
-            fi
+            NAME=$(basename "$f" .json)   # имя берём из имени файла
+            # Получаем существующие воркфлоу и ищем по имени
             EXISTING=$(curl -sS -H "X-N8N-API-KEY: $N8N_API_KEY" "$N8N_BASE_URL/api/v1/workflows?limit=9999")
             ID=$(echo "$EXISTING" | jq -r --arg n "$NAME" '.data[]? | select(.name==$n) | .id' | head -n1)
+
             if [ -n "${ID:-}" ] && [ "$ID" != "null" ]; then
               echo "♻️  Update $NAME (id=$ID)"
               curl -sS -X PUT \
